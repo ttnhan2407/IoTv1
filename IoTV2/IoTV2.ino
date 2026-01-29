@@ -1,8 +1,17 @@
+#define BLYNK_TEMPLATE_ID "TMPL6TFgOwiX_"
+#define BLYNK_TEMPLATE_NAME "IoTv1"
+#define BLYNK_AUTH_TOKEN "p7ru9IUTN5X89npP33UMFrjHW60R9UdD"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
 #include <HardwareSerial.h>
 #include <DHT.h>
 #include <math.h>
 
-// ================== PIN CONFIG ==================
+char ssid[] = "Nhu Kim";
+char pass[] = "0776519922";
+
+// ================= PIN =================
 #define DHTPIN 26
 #define DHTTYPE DHT22
 #define MQ135_PIN 32
@@ -14,9 +23,10 @@
 DHT dht(DHTPIN, DHTTYPE);
 HardwareSerial ssam(2);
 
-#define SAMPLE_COUNT 10
+// ================= TIMER =================
+BlynkTimer timer;
 
-// ================== JW01 ==================
+// ================= JW01 =================
 const uint8_t FRAME_LEN = 9;
 const uint8_t SOF1 = 0x2C;
 const uint8_t SOF2 = 0xE4;
@@ -24,12 +34,12 @@ uint8_t buf[FRAME_LEN];
 uint8_t idx = 0;
 bool inFrame = false;
 
-// ================== SCALER ==================
-float mean_vals[6] = {40.11927982, 32.80750188, 55.38184546,
-                      650.11327832, 37.63315829, 14.77569392};
+// ================= NORMALIZATION =================
+float mean_vals[6] = {40.11927982,32.80750188,55.38184546,
+                      650.11327832,37.63315829,14.77569392};
 
-float std_vals[6]  = {2.77893082, 0.98171008, 9.54433099,
-                      147.20558343, 22.56306681, 72.15103528};
+float std_vals[6]  = {2.77893082,0.98171008,9.54433099,
+                      147.20558343,22.56306681,72.15103528};
 
 // ================== WEIGHTS ==================
 
@@ -87,13 +97,21 @@ float b3[3] = {0.148441,0.593835,-0.588131};
 // ⚠️ DÁN TOÀN BỘ MA TRẬN W1, W2, W3, b1, b2, b3 Ở ĐÂY
 // (Giữ nguyên như mình đã gửi ở tin trước)
 
-// ================== RELU ==================
-float relu(float x){ return x > 0 ? x : 0; }
+extern float W1[6][16];
+extern float b1[16];
+extern float W2[16][8];
+extern float b2[8];
+extern float W3[8][3];
+extern float b3[3];
 
-// ================== SOFTMAX ==================
-void softmax(float* input, float* output, int size){
-  float maxVal = input[0];
-  for(int i=1;i<size;i++) if(input[i]>maxVal) maxVal=input[i];
+// ================= RELU =================
+float relu(float x){ return x>0?x:0; }
+
+// ================= SOFTMAX =================
+void softmax(float* input,float* output,int size){
+  float maxVal=input[0];
+  for(int i=1;i<size;i++)
+    if(input[i]>maxVal) maxVal=input[i];
 
   float sum=0;
   for(int i=0;i<size;i++){
@@ -104,9 +122,9 @@ void softmax(float* input, float* output, int size){
     output[i]/=sum;
 }
 
-// ================== NN ==================
-void predict(float inputData[6], float output[3]){
-  float l1[16], l2[8], l3[3];
+// ================= NN =================
+void predict(float inputData[6],float output[3]){
+  float l1[16],l2[8],l3[3];
 
   for(int j=0;j<16;j++){
     l1[j]=b1[j];
@@ -131,35 +149,21 @@ void predict(float inputData[6], float output[3]){
   softmax(l3,output,3);
 }
 
-// ================== READ MQ ==================
-int readAnalogAverage(int pin){
-  long sum=0;
-  for(int i=0;i<SAMPLE_COUNT;i++){
-    sum+=analogRead(pin);
-    delay(5);
-  }
-  return sum/SAMPLE_COUNT;
-}
-
-// ================== READ DUST ==================
+// ================= READ DUST =================
 float readDust(){
-  long dustSum=0;
-  for(int i=0;i<SAMPLE_COUNT;i++){
-    digitalWrite(DUST_LED_PIN,LOW);
-    delayMicroseconds(280);
-    dustSum+=analogRead(DUST_SENSOR_PIN);
-    delayMicroseconds(40);
-    digitalWrite(DUST_LED_PIN,HIGH);
-    delay(10);
-  }
-  float raw=dustSum/SAMPLE_COUNT;
+  digitalWrite(DUST_LED_PIN,LOW);
+  delayMicroseconds(280);
+  int raw=analogRead(DUST_SENSOR_PIN);
+  delayMicroseconds(40);
+  digitalWrite(DUST_LED_PIN,HIGH);
+
   float voltage=raw*(3.3/4095.0);
   float density=(voltage-0.6)/0.5;
   if(density<0) density=0;
   return density*1000;
 }
 
-// ================== JW01 ==================
+// ================= READ JW01 =================
 bool validChecksum(){
   uint16_t sum=0;
   for(int i=0;i<FRAME_LEN-1;i++)
@@ -192,31 +196,22 @@ void readJW01(float &tvoc,int &co2){
   }
 }
 
-// ================== ALERT ==================
+// ================= ALERT =================
 unsigned long poorStart=0;
 bool poorActive=false;
 
-void setup(){
-  Serial.begin(115200);
-  dht.begin();
-  pinMode(DUST_LED_PIN,OUTPUT);
-  digitalWrite(DUST_LED_PIN,HIGH);
-  ssam.begin(9600,SERIAL_8N1,SSAM_RX_PIN,SSAM_TX_PIN);
-  Serial.println("AIR QUALITY + TinyML RUNNING");
-}
-
-void loop(){
+// ================= MAIN FUNCTION =================
+void sendData(){
 
   float temperature=dht.readTemperature();
   float humidity=dht.readHumidity();
-  int mq135=readAnalogAverage(MQ135_PIN);
+  int mq135=analogRead(MQ135_PIN);
   float dust=readDust();
 
   float tvoc=0;
   int co2=0;
   readJW01(tvoc,co2);
 
-  // ======= Chuẩn hóa =======
   float inputData[6]={
     (mq135-mean_vals[0])/std_vals[0],
     (temperature-mean_vals[1])/std_vals[1],
@@ -232,38 +227,68 @@ void loop(){
   int label=0;
   float maxVal=output[0];
   for(int i=1;i<3;i++)
-    if(output[i]>maxVal){ maxVal=output[i]; label=i; }
+    if(output[i]>maxVal){maxVal=output[i];label=i;}
 
-  // ======= HIỂN THỊ =======
+  // ===== SERIAL =====
   Serial.println("\n===== SENSOR DATA =====");
-  Serial.print("MQ135: "); Serial.println(mq135);
-  Serial.print("Temp: "); Serial.println(temperature);
-  Serial.print("Humidity: "); Serial.println(humidity);
-  Serial.print("CO2: "); Serial.println(co2);
-  Serial.print("TVOC: "); Serial.println(tvoc);
-  Serial.print("Dust: "); Serial.println(dust);
+  Serial.print("Temp: ");Serial.println(temperature);
+  Serial.print("Humidity: ");Serial.println(humidity);
+  Serial.print("MQ135: ");Serial.println(mq135);
+  Serial.print("CO2: ");Serial.println(co2);
+  Serial.print("TVOC: ");Serial.println(tvoc);
+  Serial.print("Dust: ");Serial.println(dust);
 
-  Serial.print("GOOD: "); Serial.print(output[0],4);
-  Serial.print(" | MODERATE: "); Serial.print(output[1],4);
-  Serial.print(" | POOR: "); Serial.println(output[2],4);
+  Serial.print("Prediction: G=");
+  Serial.print(output[0],3);
+  Serial.print(" M=");
+  Serial.print(output[1],3);
+  Serial.print(" P=");
+  Serial.println(output[2],3);
 
-  if(label==0) Serial.println("Status: GOOD");
-  else if(label==1) Serial.println("Status: MODERATE");
-  else Serial.println("Status: POOR");
+  String status;
+  if(label==0) status="GOOD";
+  else if(label==1) status="MODERATE";
+  else status="POOR";
 
-  // ======= CẢNH BÁO 1 PHÚT =======
+  Serial.println("Status: "+status);
+
+  // ===== BLYNK =====
+  Blynk.virtualWrite(V0,mq135);
+  Blynk.virtualWrite(V1,temperature);
+  Blynk.virtualWrite(V2,humidity);
+  Blynk.virtualWrite(V3,co2);
+  Blynk.virtualWrite(V4,tvoc);
+  Blynk.virtualWrite(V5,dust);
+  Blynk.virtualWrite(V6,status);
+
+  // ===== ALERT 1 MIN =====
   if(label==2){
     if(!poorActive){
       poorStart=millis();
       poorActive=true;
     }
     if(millis()-poorStart>60000){
-      Serial.println("⚠️ POOR LEVEL CONFIRMED > 1 MINUTE");
+      Serial.println("⚠ POOR > 1 MINUTE");
+      Blynk.logEvent("air_alert","Air quality POOR > 1 minute");
     }
-  }
-  else{
+  }else{
     poorActive=false;
   }
+}
 
-  delay(3000);
+void setup(){
+  Serial.begin(115200);
+  dht.begin();
+  pinMode(DUST_LED_PIN,OUTPUT);
+  digitalWrite(DUST_LED_PIN,HIGH);
+  ssam.begin(9600,SERIAL_8N1,SSAM_RX_PIN,SSAM_TX_PIN);
+
+  Blynk.begin(BLYNK_AUTH_TOKEN,ssid,pass);
+
+  timer.setInterval(3000L,sendData);
+}
+
+void loop(){
+  Blynk.run();
+  timer.run();
 }
