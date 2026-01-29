@@ -22,8 +22,6 @@ char pass[] = "0776519922";
 
 DHT dht(DHTPIN, DHTTYPE);
 HardwareSerial ssam(2);
-
-// ================= TIMER =================
 BlynkTimer timer;
 
 // ================= JW01 =================
@@ -96,13 +94,6 @@ float b3[3] = {0.148441,0.593835,-0.588131};
 
 // ⚠️ DÁN TOÀN BỘ MA TRẬN W1, W2, W3, b1, b2, b3 Ở ĐÂY
 // (Giữ nguyên như mình đã gửi ở tin trước)
-
-extern float W1[6][16];
-extern float b1[16];
-extern float W2[16][8];
-extern float b2[8];
-extern float W3[8][3];
-extern float b3[3];
 
 // ================= RELU =================
 float relu(float x){ return x>0?x:0; }
@@ -200,7 +191,7 @@ void readJW01(float &tvoc,int &co2){
 unsigned long poorStart=0;
 bool poorActive=false;
 
-// ================= MAIN FUNCTION =================
+// ================= MAIN =================
 void sendData(){
 
   float temperature=dht.readTemperature();
@@ -229,7 +220,12 @@ void sendData(){
   for(int i=1;i<3;i++)
     if(output[i]>maxVal){maxVal=output[i];label=i;}
 
-  // ===== SERIAL =====
+  String status;
+  if(label==0) status="GOOD";
+  else if(label==1) status="MODERATE";
+  else status="POOR";
+
+  // ===== SERIAL DEBUG =====
   Serial.println("\n===== SENSOR DATA =====");
   Serial.print("Temp: ");Serial.println(temperature);
   Serial.print("Humidity: ");Serial.println(humidity);
@@ -237,20 +233,17 @@ void sendData(){
   Serial.print("CO2: ");Serial.println(co2);
   Serial.print("TVOC: ");Serial.println(tvoc);
   Serial.print("Dust: ");Serial.println(dust);
-
-  Serial.print("Prediction: G=");
-  Serial.print(output[0],3);
-  Serial.print(" M=");
-  Serial.print(output[1],3);
-  Serial.print(" P=");
-  Serial.println(output[2],3);
-
-  String status;
-  if(label==0) status="GOOD";
-  else if(label==1) status="MODERATE";
-  else status="POOR";
-
   Serial.println("Status: "+status);
+
+  // ===== CSV LOGGER =====
+  Serial.print(millis()); Serial.print(",");
+  Serial.print(temperature); Serial.print(",");
+  Serial.print(humidity); Serial.print(",");
+  Serial.print(mq135); Serial.print(",");
+  Serial.print(co2); Serial.print(",");
+  Serial.print(tvoc); Serial.print(",");
+  Serial.print(dust); Serial.print(",");
+  Serial.println(label);
 
   // ===== BLYNK =====
   Blynk.virtualWrite(V0,mq135);
@@ -261,14 +254,13 @@ void sendData(){
   Blynk.virtualWrite(V5,dust);
   Blynk.virtualWrite(V6,status);
 
-  // ===== ALERT 1 MIN =====
+  // ===== ALERT =====
   if(label==2){
     if(!poorActive){
       poorStart=millis();
       poorActive=true;
     }
     if(millis()-poorStart>60000){
-      Serial.println("⚠ POOR > 1 MINUTE");
       Blynk.logEvent("air_alert","Air quality POOR > 1 minute");
     }
   }else{
@@ -284,7 +276,6 @@ void setup(){
   ssam.begin(9600,SERIAL_8N1,SSAM_RX_PIN,SSAM_TX_PIN);
 
   Blynk.begin(BLYNK_AUTH_TOKEN,ssid,pass);
-
   timer.setInterval(3000L,sendData);
 }
 
