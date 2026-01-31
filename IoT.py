@@ -22,23 +22,60 @@ print(df.head())
 # field2 → MQ135
 # field3 → Temperature
 # field4 → Humidity
-# field5 → CO2
-# field6 → TVOC
-# field7 → Dust
+# field5 → CO2 (JW01)
+# field6 → TVOC (JW01)
+# field7 → Dust (GP2Y1014AU)
 
 X = df[['field2','field3','field4','field5','field6','field7']]
 
 # =========================
-# 3. TẠO LABEL
+# 3. TẠO LABEL (CẢI TIẾN)
 # =========================
 
 def create_label(row):
     co2 = row['field5']
     dust = row['field7']
-    
-    if co2 < 800 and dust < 35:
+    tvoc = row['field6']
+    mq135 = row['field2']
+    temp = row['field3']
+    hum  = row['field4']
+
+    score = 0
+
+    # ===== CO2 =====
+    if co2 >= 1200:
+        score += 2
+    elif co2 >= 800:
+        score += 1
+
+    # ===== Dust =====
+    if dust >= 75:
+        score += 2
+    elif dust >= 35:
+        score += 1
+
+    # ===== TVOC =====
+    if tvoc >= 600:
+        score += 2
+    elif tvoc >= 300:
+        score += 1
+
+    # ===== MQ135 =====
+    if mq135 > 300:
+        score += 1
+
+    # ===== Temperature =====
+    if temp < 18 or temp > 32:
+        score += 1
+
+    # ===== Humidity =====
+    if hum < 30 or hum > 70:
+        score += 1
+
+    # ===== Final Class =====
+    if score <= 2:
         return 0   # Good
-    elif co2 < 1200:
+    elif score <= 5:
         return 1   # Moderate
     else:
         return 2   # Poor
@@ -69,12 +106,12 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # =========================
-# 6. BUILD MODEL (TinyML)
+# 6. BUILD MODEL (TỐI ƯU NHẸ CHO ESP32)
 # =========================
 
 model = keras.Sequential([
-    keras.layers.Dense(16, activation='relu', input_shape=(6,)),
-    keras.layers.Dense(8, activation='relu'),
+    keras.layers.Dense(12, activation='relu', input_shape=(6,)),
+    keras.layers.Dense(6, activation='relu'),
     keras.layers.Dense(3, activation='softmax')
 ])
 
@@ -117,7 +154,7 @@ plt.legend(["Train", "Validation"])
 plt.show()
 
 # =========================
-# 10. CONVERT TFLITE
+# 10. CONVERT TFLITE (TinyML)
 # =========================
 
 converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -138,13 +175,13 @@ weights = model.get_weights()
 print("\n================ EXPORT FOR ARDUINO ================")
 
 layer_names = [
-    "W1 (6x16)", "b1 (16)",
-    "W2 (16x8)", "b2 (8)",
-    "W3 (8x3)", "b3 (3)"
+    "W1 (6x12)", "b1 (12)",
+    "W2 (12x6)", "b2 (6)",
+    "W3 (6x3)", "b3 (3)"
 ]
 
 for name, w in zip(layer_names, weights):
     print("\n", name)
     print(np.round(w, 6))
 
-print("\n===== GIAI ĐOẠN TRAIN HOÀN THÀNH =====")
+print("\n===== TRAINING HOÀN THÀNH =====")
